@@ -1,0 +1,8 @@
+{
+  "projects": {
+    "default": "lend-api",
+    "production": "lend-api"
+  },
+  "targets": {},
+  "etags": {}
+}

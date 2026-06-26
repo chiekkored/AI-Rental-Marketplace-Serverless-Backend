@@ -1,0 +1,1224 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isSelf(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function isAdmin() {
+      return isSignedIn() &&
+        ('admin' in request.auth.token) &&
+        request.auth.token.admin == true;
+    }
+
+    function isPaymentMethodState(value) {
+      return value is map &&
+        value.keys().hasOnly(['visible', 'enabled']) &&
+        value.visible is bool &&
+        value.enabled is bool;
+    }
+
+    function isValidUpfrontPaymentMethods(value) {
+      return value is map &&
+        value.keys().hasOnly([
+          'card',
+          'gcash',
+          'paymaya',
+          'grab_pay',
+          'shopeepay',
+          'qrph',
+          'bpi',
+          'ubp',
+          'bdo',
+          'landbank',
+          'metrobank'
+        ]) &&
+        isPaymentMethodState(value.card) &&
+        isPaymentMethodState(value.gcash) &&
+        isPaymentMethodState(value.paymaya) &&
+        isPaymentMethodState(value.grab_pay) &&
+        isPaymentMethodState(value.shopeepay) &&
+        isPaymentMethodState(value.qrph) &&
+        isPaymentMethodState(value.bpi) &&
+        isPaymentMethodState(value.ubp) &&
+        isPaymentMethodState(value.bdo) &&
+        isPaymentMethodState(value.landbank) &&
+        isPaymentMethodState(value.metrobank);
+    }
+
+    function isValidSubscriptionPaymentMethods(value) {
+      return value is map &&
+        value.keys().hasOnly(['card', 'paymaya']) &&
+        isPaymentMethodState(value.card) &&
+        isPaymentMethodState(value.paymaya);
+    }
+
+    function isValidPaymentMethodsConfigWrite() {
+      return isAdmin() &&
+        request.resource.data.keys().hasOnly([
+          'upfrontMethods',
+          'subscriptionMethods',
+          'updatedAt',
+          'updatedBy'
+        ]) &&
+        isValidUpfrontPaymentMethods(request.resource.data.upfrontMethods) &&
+        isValidSubscriptionPaymentMethods(request.resource.data.subscriptionMethods) &&
+        request.resource.data.updatedAt is timestamp &&
+        request.resource.data.updatedBy == request.auth.uid;
+    }
+
+    function isContentPageSlug(slug) {
+      return slug in ['terms-and-conditions', 'privacy-policy', 'help-center'];
+    }
+
+    function isContentPageActor(value) {
+      return value is string ||
+        (
+          value is map &&
+          value.keys().hasOnly(['id', 'name']) &&
+          value.id is string &&
+          value.name is string
+        );
+    }
+
+    function isValidContentPageWrite(slug) {
+      return isAdmin() &&
+        isContentPageSlug(slug) &&
+        request.resource.data.slug == slug &&
+        request.resource.data.keys().hasOnly([
+          'slug',
+          'title',
+          'description',
+          'effectiveDate',
+          'lastUpdated',
+          'draftMarkdown',
+          'publishedMarkdown',
+          'draftTopics',
+          'publishedTopics',
+          'draftQuestions',
+          'publishedQuestions',
+          'draftUpdatedAt',
+          'draftUpdatedBy',
+          'publishedAt',
+          'publishedBy'
+        ]) &&
+        request.resource.data.title is string &&
+        request.resource.data.description is string &&
+        (
+          slug == 'help-center' ||
+          (
+            ('draftMarkdown' in request.resource.data || 'publishedMarkdown' in request.resource.data) &&
+            (!('draftMarkdown' in request.resource.data) || request.resource.data.draftMarkdown is string) &&
+            (!('publishedMarkdown' in request.resource.data) || request.resource.data.publishedMarkdown is string)
+          )
+        ) &&
+        (
+          slug != 'help-center' ||
+          (
+            ('draftTopics' in request.resource.data || 'publishedTopics' in request.resource.data) &&
+            (!('draftTopics' in request.resource.data) || request.resource.data.draftTopics is list) &&
+            (!('publishedTopics' in request.resource.data) || request.resource.data.publishedTopics is list) &&
+            (!('draftQuestions' in request.resource.data) || request.resource.data.draftQuestions is list) &&
+            (!('publishedQuestions' in request.resource.data) || request.resource.data.publishedQuestions is list)
+          )
+        ) &&
+        (!('effectiveDate' in request.resource.data) || request.resource.data.effectiveDate is string) &&
+        (!('lastUpdated' in request.resource.data) || request.resource.data.lastUpdated is string) &&
+        (!('draftUpdatedAt' in request.resource.data) || request.resource.data.draftUpdatedAt is timestamp) &&
+        (!('publishedAt' in request.resource.data) || request.resource.data.publishedAt is timestamp) &&
+        (!('draftUpdatedBy' in request.resource.data) || isContentPageActor(request.resource.data.draftUpdatedBy)) &&
+        (!('publishedBy' in request.resource.data) || isContentPageActor(request.resource.data.publishedBy));
+    }
+
+    function isVerificationLevel(level) {
+      return level in ['None', 'Basic', 'Full'];
+    }
+
+    function currentUserVerification() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.verified;
+    }
+
+    function currentUserCanRent() {
+      return isSignedIn() && currentUserVerification() in ['Basic', 'Full'];
+    }
+
+    function currentUserCanList() {
+      return isSignedIn() && currentUserVerification() == 'Full';
+    }
+
+    function requestFullVerification() {
+      return request.resource.data.get('fullVerification', {
+        'status': 'None'
+      });
+    }
+
+    function resourceFullVerification() {
+      return resource.data.get('fullVerification', {
+        'status': 'None'
+      });
+    }
+
+    function requestBusinessRegistration() {
+      return request.resource.data.get('businessRegistration', {
+        'visible': false,
+        'required': false,
+        'status': 'Not Submitted',
+        'visibilityReasons': []
+      });
+    }
+
+    function resourceBusinessRegistration() {
+      return resource.data.get('businessRegistration', {
+        'visible': false,
+        'required': false,
+        'status': 'Not Submitted',
+        'visibilityReasons': []
+      });
+    }
+
+    function isValidUserCreate(uid) {
+      return isSelf(uid) &&
+        request.resource.data.uid == uid &&
+        hasNoClaimedFoundingOwnerUserFields() &&
+        (
+          request.resource.data.verified == 'None' ||
+          (
+            request.resource.data.verified == 'Basic' &&
+            request.auth.token.email_verified == true
+          )
+        );
+    }
+
+    function isValidUserSelfUpdate(uid) {
+      return isSelf(uid) &&
+        isVerificationLevel(request.resource.data.verified) &&
+        isValidFoundingOwnerUserFieldsSelfUpdate() &&
+        isValidFullVerificationSelfUpdate() &&
+        isValidBusinessRegistrationSelfUpdate() &&
+        isValidBusinessNameListingPreferenceSelfUpdate() &&
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['status']) &&
+        isValidPendingVerificationUserMetadataUpdate() &&
+        isValidPendingVerificationProfileFieldUpdate() &&
+        (
+          request.resource.data.verified == resource.data.verified ||
+          (
+            resource.data.verified == 'None' &&
+            request.resource.data.verified == 'Basic' &&
+            request.auth.token.email_verified == true
+          ) ||
+          (
+            resource.data.verified == 'Full' &&
+            request.resource.data.verified == 'Basic' &&
+            requestFullVerification().status == 'Pending'
+          )
+        );
+    }
+
+    function hasNoClaimedFoundingOwnerUserFields() {
+      return (
+          !('isFoundingOwner' in request.resource.data) ||
+          request.resource.data.isFoundingOwner == false
+        ) &&
+        (
+          !('foundingOwner' in request.resource.data) ||
+          request.resource.data.foundingOwner == null
+        ) &&
+        (
+          !('foundingOwnerInvite' in request.resource.data) ||
+          request.resource.data.foundingOwnerInvite == null
+        );
+    }
+
+    function isValidFoundingOwnerUserFieldsSelfUpdate() {
+      return (
+          (
+            !('isFoundingOwner' in resource.data) ||
+            resource.data.isFoundingOwner == false
+          ) &&
+          (
+            !('foundingOwner' in resource.data) ||
+            resource.data.foundingOwner == null
+          ) &&
+          (
+            !('foundingOwnerInvite' in resource.data) ||
+            resource.data.foundingOwnerInvite == null
+          ) &&
+          hasNoClaimedFoundingOwnerUserFields()
+        ) ||
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+          'isFoundingOwner',
+          'foundingOwner',
+          'foundingOwnerInvite'
+        ]);
+    }
+
+    function isValidBusinessNameListingPreferenceSelfUpdate() {
+      return !('useBusinessNameForListingOwnerName' in request.resource.data) ||
+        request.resource.data.useBusinessNameForListingOwnerName ==
+          resource.data.useBusinessNameForListingOwnerName ||
+        (
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'useBusinessNameForListingOwnerName'
+          ]) &&
+          request.resource.data.useBusinessNameForListingOwnerName is bool
+        );
+    }
+
+    function isValidPendingVerificationUserMetadataUpdate() {
+      return !(
+          resource.data.verified == 'Full' &&
+          request.resource.data.verified == 'Basic' &&
+          requestFullVerification().status == 'Pending'
+        ) ||
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'verified',
+            'fullVerification',
+            'businessRegistration',
+            'userMetadataVersion'
+          ]);
+    }
+
+    function isValidPendingVerificationProfileFieldUpdate() {
+      return !(
+          isPendingFullVerification(resourceFullVerification()) ||
+          isPendingFullVerification(requestFullVerification())
+        ) ||
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+          'firstName',
+          'lastName',
+          'dateOfBirth',
+          'email',
+          'phone',
+          'location',
+          'photoUrl'
+        ]);
+    }
+
+    function isPendingFullVerification(fullVerification) {
+      return fullVerification is map &&
+        fullVerification.status == 'Pending';
+    }
+
+    function isValidFullVerificationSelfUpdate() {
+      return !('fullVerification' in request.resource.data) ||
+        requestFullVerification() == resourceFullVerification() ||
+        (
+          requestFullVerification().keys().hasOnly([
+            'status',
+            'activeSubmissionId',
+            'submittedAt',
+            'reviewedAt'
+          ]) &&
+          requestFullVerification().status == 'Pending' &&
+          requestFullVerification().activeSubmissionId is string &&
+          requestFullVerification().submittedAt is timestamp &&
+          requestFullVerification().reviewedAt == null &&
+          existsAfter(/databases/$(database)/documents/verificationSubmissions/$(requestFullVerification().activeSubmissionId)) &&
+          getAfter(/databases/$(database)/documents/verificationSubmissions/$(requestFullVerification().activeSubmissionId)).data.userId == request.auth.uid &&
+          getAfter(/databases/$(database)/documents/verificationSubmissions/$(requestFullVerification().activeSubmissionId)).data.status == 'Pending'
+        );
+    }
+
+    function isBusinessRegistrationStatus(status) {
+      return status in ['Not Submitted', 'Required', 'Submitted', 'Approved', 'Rejected'];
+    }
+
+    function isValidBusinessRegistrationSelfUpdate() {
+      return !('businessRegistration' in request.resource.data) ||
+        requestBusinessRegistration() == resourceBusinessRegistration() ||
+        (
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'fullVerification',
+            'businessRegistration',
+            'userMetadataVersion'
+          ]) &&
+          isValidBusinessRegistrationSummary(requestBusinessRegistration()) &&
+          requestBusinessRegistration().status in ['Not Submitted', 'Required', 'Submitted'] &&
+          (
+            requestBusinessRegistration().required == false ||
+            resourceBusinessRegistration().required == true
+          ) &&
+          !('businessName' in requestBusinessRegistration()) &&
+          !('businessType' in requestBusinessRegistration()) &&
+          !('businessAddress' in requestBusinessRegistration()) &&
+          !('reviewedAt' in requestBusinessRegistration()) &&
+          !('reviewedBy' in requestBusinessRegistration()) &&
+          isValidBusinessRegistrationVisibilityReasons(requestBusinessRegistration().visibilityReasons) &&
+          (
+            !('requestedListingReviewSubmissionId' in requestBusinessRegistration()) ||
+            requestBusinessRegistration().requestedListingReviewSubmissionId == null ||
+            requestBusinessRegistration().requestedListingReviewSubmissionId ==
+              resourceBusinessRegistration().requestedListingReviewSubmissionId
+          )
+        );
+    }
+
+    function isValidBusinessRegistrationSummary(summary) {
+      return summary is map &&
+        summary.keys().hasOnly([
+          'visible',
+          'required',
+          'status',
+          'visibilityReasons',
+          'businessName',
+          'businessType',
+          'businessAddress',
+          'requestedListingReviewSubmissionId',
+          'requestedAt',
+          'reviewedAt',
+          'reviewedBy',
+          'submittedAt',
+          'updatedAt'
+        ]) &&
+        summary.visible == true &&
+        summary.required is bool &&
+        isBusinessRegistrationStatus(summary.status) &&
+        summary.visibilityReasons is list &&
+        (!('businessName' in summary) ||
+          summary.businessName == null ||
+          summary.businessName is string) &&
+        (!('businessType' in summary) ||
+          summary.businessType == null ||
+          summary.businessType is string) &&
+        (!('businessAddress' in summary) ||
+          summary.businessAddress == null ||
+          summary.businessAddress is string) &&
+        (!('requestedListingReviewSubmissionId' in summary) ||
+          summary.requestedListingReviewSubmissionId == null ||
+          summary.requestedListingReviewSubmissionId is string) &&
+        (!('requestedAt' in summary) ||
+          summary.requestedAt == null ||
+          summary.requestedAt is timestamp) &&
+        (!('reviewedAt' in summary) ||
+          summary.reviewedAt == null ||
+          summary.reviewedAt is timestamp) &&
+        (!('reviewedBy' in summary) ||
+          summary.reviewedBy == null ||
+          (
+            summary.reviewedBy is map &&
+            summary.reviewedBy.uid is string &&
+            summary.reviewedBy.name is string
+          )) &&
+        (!('submittedAt' in summary) ||
+          summary.submittedAt == null ||
+          summary.submittedAt is timestamp) &&
+        (!('updatedAt' in summary) ||
+          summary.updatedAt == null ||
+          summary.updatedAt is timestamp);
+    }
+
+    function isValidBusinessRegistrationVisibilityReasons(reasons) {
+      return reasons.hasOnly(['owner_self_declared']) ||
+        (
+          resourceBusinessRegistration().visibilityReasons is list &&
+          resourceBusinessRegistration().visibilityReasons.hasAny(['admin_request']) &&
+          reasons.hasOnly(['owner_self_declared', 'admin_request'])
+        );
+    }
+
+    function hasPendingVerificationSubmission() {
+      return ('fullVerification' in get(/databases/$(database)/documents/users/$(request.auth.uid)).data) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.fullVerification is map &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.fullVerification.status == 'Pending';
+    }
+
+    function isValidLocationMap(location) {
+      return location is map &&
+        location.keys().hasOnly([
+          'plusCode',
+          'streetNumber',
+          'route',
+          'locality',
+          'administrativeAreaLevel2',
+          'administrativeAreaLevel1',
+          'country',
+          'countryShortName',
+          'postalCode',
+          'formattedAddress',
+          'lat',
+          'lng',
+          'geohash'
+        ]) &&
+        location.lat is number &&
+        location.lng is number &&
+        location.geohash is string &&
+        (!('plusCode' in location) || location.plusCode is string) &&
+        (!('streetNumber' in location) || location.streetNumber is string) &&
+        (!('route' in location) || location.route is string) &&
+        (!('locality' in location) || location.locality is string) &&
+        (!('administrativeAreaLevel2' in location) || location.administrativeAreaLevel2 is string) &&
+        (!('administrativeAreaLevel1' in location) || location.administrativeAreaLevel1 is string) &&
+        (!('country' in location) || location.country is string) &&
+        (!('countryShortName' in location) || location.countryShortName is string) &&
+        (!('postalCode' in location) || location.postalCode is string) &&
+        (!('formattedAddress' in location) || location.formattedAddress is string);
+    }
+
+    function isValidVerificationSubmissionCreate(submissionId) {
+      return isSignedIn() &&
+        !hasPendingVerificationSubmission() &&
+        request.resource.data.keys().hasOnly([
+          'id',
+          'userId',
+          'firstName',
+          'lastName',
+          'dateOfBirth',
+          'email',
+          'phone',
+          'address',
+          'location',
+          'photoUrl',
+          'faceKycStatus',
+          'verificationProvider',
+          'diditSessionId',
+          'diditWorkflowId',
+          'diditStatus',
+          'diditDecision',
+          'diditStartedAt',
+          'diditCompletedAt',
+          'status',
+          'submittedAt',
+          'reviewedAt',
+          'requestType',
+          'updatedFields',
+          'isRentalBusinessOwner'
+        ]) &&
+        request.resource.data.id == submissionId &&
+        request.resource.data.userId == request.auth.uid &&
+        request.resource.data.firstName is string &&
+        request.resource.data.lastName is string &&
+        request.resource.data.dateOfBirth is timestamp &&
+        request.resource.data.email is string &&
+        request.resource.data.phone is string &&
+        request.resource.data.address is string &&
+        isValidLocationMap(request.resource.data.location) &&
+        (!('photoUrl' in request.resource.data) ||
+          request.resource.data.photoUrl == null ||
+          request.resource.data.photoUrl is string) &&
+        request.resource.data.faceKycStatus is string &&
+        request.resource.data.verificationProvider is string &&
+        (!('diditSessionId' in request.resource.data) ||
+          request.resource.data.diditSessionId == null ||
+          request.resource.data.diditSessionId is string) &&
+        (!('diditWorkflowId' in request.resource.data) ||
+          request.resource.data.diditWorkflowId == null ||
+          request.resource.data.diditWorkflowId is string) &&
+        (!('diditStatus' in request.resource.data) ||
+          request.resource.data.diditStatus == null ||
+          request.resource.data.diditStatus is string) &&
+        (!('diditDecision' in request.resource.data) ||
+          request.resource.data.diditDecision == null ||
+          request.resource.data.diditDecision is map) &&
+        request.resource.data.status == 'Pending' &&
+        request.resource.data.submittedAt is timestamp &&
+        request.resource.data.reviewedAt == null &&
+        (!('requestType' in request.resource.data) ||
+          request.resource.data.requestType in ['upgrade_verification', 'account_information_update']) &&
+        (!('updatedFields' in request.resource.data) ||
+          request.resource.data.updatedFields is list) &&
+        (!('isRentalBusinessOwner' in request.resource.data) ||
+          request.resource.data.isRentalBusinessOwner is bool) &&
+        getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.fullVerification.status == 'Pending' &&
+        getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.fullVerification.activeSubmissionId == submissionId;
+    }
+
+    function isValidBusinessRegistrationSubmissionWrite(uid) {
+      return isSelf(uid) &&
+        (
+          currentUserCanList() ||
+          hasPendingSelfDeclaredBusinessRegistrationVerification(uid)
+        ) &&
+        request.resource.data.keys().hasOnly([
+          'ownerId',
+          'status',
+          'documents',
+          'taxInvoiceAcknowledged',
+          'businessName',
+          'businessType',
+          'businessAddress',
+          'reviewedAt',
+          'reviewedBy',
+          'requestedListingReviewSubmissionId',
+          'verificationSubmissionId',
+          'submittedAt',
+          'updatedAt'
+        ]) &&
+        request.resource.data.ownerId == uid &&
+        request.resource.data.status == 'Pending' &&
+        isValidBusinessRegistrationDocuments(uid, request.resource.data.documents) &&
+        request.resource.data.taxInvoiceAcknowledged == true &&
+        !('businessName' in request.resource.data) &&
+        !('businessType' in request.resource.data) &&
+        !('businessAddress' in request.resource.data) &&
+        !('reviewedAt' in request.resource.data) &&
+        !('reviewedBy' in request.resource.data) &&
+        (!('requestedListingReviewSubmissionId' in request.resource.data) ||
+          request.resource.data.requestedListingReviewSubmissionId == null ||
+          request.resource.data.requestedListingReviewSubmissionId ==
+            getAfter(/databases/$(database)/documents/users/$(uid)).data.businessRegistration.requestedListingReviewSubmissionId) &&
+        (!('verificationSubmissionId' in request.resource.data) ||
+          request.resource.data.verificationSubmissionId == null ||
+          request.resource.data.verificationSubmissionId is string) &&
+        (!hasPendingSelfDeclaredBusinessRegistrationVerification(uid) ||
+          (
+            request.resource.data.verificationSubmissionId is string &&
+            request.resource.data.verificationSubmissionId ==
+              getAfter(/databases/$(database)/documents/users/$(uid)).data.fullVerification.activeSubmissionId
+          )) &&
+        request.resource.data.submittedAt is timestamp &&
+        request.resource.data.updatedAt is timestamp &&
+        getAfter(/databases/$(database)/documents/users/$(uid)).data.businessRegistration.status == 'Submitted';
+    }
+
+    function hasPendingSelfDeclaredBusinessRegistrationVerification(uid) {
+      let fullVerification = getAfter(/databases/$(database)/documents/users/$(uid)).data.get('fullVerification', {
+        'status': 'None',
+        'activeSubmissionId': ''
+      });
+      let activeSubmissionId = fullVerification.get('activeSubmissionId', '');
+      return fullVerification.status == 'Pending' &&
+        activeSubmissionId is string &&
+        existsAfter(/databases/$(database)/documents/verificationSubmissions/$(activeSubmissionId)) &&
+        getAfter(/databases/$(database)/documents/verificationSubmissions/$(activeSubmissionId)).data.userId == uid &&
+        getAfter(/databases/$(database)/documents/verificationSubmissions/$(activeSubmissionId)).data.status == 'Pending' &&
+        getAfter(/databases/$(database)/documents/verificationSubmissions/$(activeSubmissionId)).data.isRentalBusinessOwner == true;
+    }
+
+    function isValidBusinessRegistrationDocuments(uid, documents) {
+      return documents is map &&
+        documents.keys().hasOnly([
+          'dti',
+          'bir',
+          'mayorBusinessPermit'
+        ]) &&
+        documents.dti is string &&
+        documents.bir is string &&
+        documents.dti.matches('^users/' + uid + '/businessRegistration/[^/]+$') &&
+        documents.bir.matches('^users/' + uid + '/businessRegistration/[^/]+$') &&
+        (!('mayorBusinessPermit' in documents) ||
+          documents.mayorBusinessPermit == null ||
+          (
+            documents.mayorBusinessPermit is string &&
+            documents.mayorBusinessPermit.matches('^users/' + uid + '/businessRegistration/[^/]+$')
+          ));
+    }
+
+    function isValidBusinessRegistrationSubmissionAdminUpdate(uid) {
+      return request.resource.data.ownerId == uid &&
+        request.resource.data.keys().hasOnly([
+          'ownerId',
+          'status',
+          'documents',
+          'taxInvoiceAcknowledged',
+          'businessName',
+          'businessType',
+          'businessAddress',
+          'rejectionReason',
+          'rejectionReasonCode',
+          'reviewedAt',
+          'reviewedBy',
+          'requestedListingReviewSubmissionId',
+          'verificationSubmissionId',
+          'submittedAt',
+          'updatedAt'
+        ]) &&
+        isValidBusinessRegistrationDocuments(uid, request.resource.data.documents) &&
+        request.resource.data.taxInvoiceAcknowledged == true &&
+        request.resource.data.status in ['Pending', 'Approved', 'Rejected'] &&
+        (!('businessName' in request.resource.data) ||
+          request.resource.data.businessName == null ||
+          request.resource.data.businessName is string) &&
+        (!('businessType' in request.resource.data) ||
+          request.resource.data.businessType == null ||
+          request.resource.data.businessType is string) &&
+        (!('businessAddress' in request.resource.data) ||
+          request.resource.data.businessAddress == null ||
+          request.resource.data.businessAddress is string) &&
+        (!('rejectionReason' in request.resource.data) ||
+          request.resource.data.rejectionReason == null ||
+          request.resource.data.rejectionReason is string) &&
+        (!('rejectionReasonCode' in request.resource.data) ||
+          request.resource.data.rejectionReasonCode == null ||
+          request.resource.data.rejectionReasonCode is string) &&
+        (
+          (
+            request.resource.data.status == 'Rejected' &&
+            request.resource.data.rejectionReasonCode is string &&
+            request.resource.data.rejectionReason is string &&
+            request.resource.data.rejectionReasonCode.size() > 0 &&
+            request.resource.data.rejectionReason.size() > 0
+          ) ||
+          (
+            request.resource.data.status != 'Rejected' &&
+            (!('rejectionReasonCode' in request.resource.data) ||
+              request.resource.data.rejectionReasonCode == null) &&
+            (!('rejectionReason' in request.resource.data) ||
+              request.resource.data.rejectionReason == null)
+          )
+        ) &&
+        (!('reviewedAt' in request.resource.data) ||
+          request.resource.data.reviewedAt == null ||
+          request.resource.data.reviewedAt is timestamp) &&
+        (!('reviewedBy' in request.resource.data) ||
+          request.resource.data.reviewedBy == null ||
+          (
+            request.resource.data.reviewedBy is map &&
+            request.resource.data.reviewedBy.uid is string &&
+            request.resource.data.reviewedBy.name is string
+          )) &&
+        (!('requestedListingReviewSubmissionId' in request.resource.data) ||
+          request.resource.data.requestedListingReviewSubmissionId == null ||
+          request.resource.data.requestedListingReviewSubmissionId is string) &&
+        (!('verificationSubmissionId' in request.resource.data) ||
+          request.resource.data.verificationSubmissionId == null ||
+          request.resource.data.verificationSubmissionId is string) &&
+        request.resource.data.submittedAt is timestamp &&
+        request.resource.data.updatedAt is timestamp;
+    }
+
+    function isValidVerificationSubmissionSelfUpdate(submissionId) {
+      return isSignedIn() &&
+        resource.data.userId == request.auth.uid &&
+        resource.data.status == 'Pending' &&
+        request.resource.data.id == submissionId &&
+        request.resource.data.userId == request.auth.uid &&
+        request.resource.data.status == 'Pending' &&
+        request.resource.data.requestType == 'account_information_update' &&
+        request.resource.data.updatedFields is list &&
+        request.resource.data.submittedAt is timestamp &&
+        request.resource.data.reviewedAt == null &&
+        getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.fullVerification.status == 'Pending' &&
+        getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.fullVerification.activeSubmissionId == submissionId;
+    }
+
+    function isValidVerificationHoldAssetUpdate(submissionId) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status',
+          'verificationHoldPreviousStatus',
+          'verificationHoldSubmissionId',
+          'verificationHoldStartedAt'
+        ]) &&
+        resource.data.status == 'Available' &&
+        request.resource.data.status == 'Hidden' &&
+        request.resource.data.verificationHoldPreviousStatus == 'Available' &&
+        request.resource.data.verificationHoldSubmissionId == submissionId &&
+        request.resource.data.verificationHoldStartedAt is timestamp &&
+        existsAfter(/databases/$(database)/documents/verificationSubmissions/$(submissionId)) &&
+        getAfter(/databases/$(database)/documents/verificationSubmissions/$(submissionId)).data.userId == request.auth.uid &&
+        getAfter(/databases/$(database)/documents/verificationSubmissions/$(submissionId)).data.status == 'Pending';
+    }
+
+    function isValidVerificationSubmissionAdminUpdate() {
+      return request.resource.data.diff(resource.data).affectedKeys()
+        .hasOnly([
+          'status',
+          'reviewedAt',
+          'rejectionReasonCode',
+          'rejectionReason'
+        ]) &&
+        request.resource.data.status in ['Pending', 'Approved', 'Rejected'] &&
+        (!('reviewedAt' in request.resource.data) ||
+          request.resource.data.reviewedAt is timestamp) &&
+        (
+          request.resource.data.status != 'Rejected' ||
+          (
+            request.resource.data.rejectionReasonCode is string &&
+            request.resource.data.rejectionReason is string &&
+            request.resource.data.rejectionReasonCode.size() > 0 &&
+            request.resource.data.rejectionReason.size() > 0
+          )
+        ) &&
+        (
+          request.resource.data.status == 'Rejected' ||
+          (
+            !('rejectionReasonCode' in request.resource.data) &&
+            !('rejectionReason' in request.resource.data)
+          )
+        );
+    }
+
+    function isValidAssetAudit() {
+      return request.resource.data.keys().hasOnly(['type', 'notes', 'createdBy', 'createdAt']) &&
+        request.resource.data.type in ['Rejected', 'Edited', 'Approved', 'Deleted', 'Archived'] &&
+        request.resource.data.notes is string &&
+        request.resource.data.createdBy.uid is string &&
+        request.resource.data.createdBy.name is string;
+    }
+
+    function listingAllowsOwnerAvailabilityUpdate() {
+      return !('deactivationLock' in resource.data) &&
+        (!('deactivationReview' in resource.data) ||
+          resource.data.deactivationReview.status != 'Pending') &&
+        resource.data.status != 'Archived';
+    }
+
+    function isValidOwnerListingStatusUpdate() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status',
+          'updatedAt'
+        ]) &&
+        listingAllowsOwnerAvailabilityUpdate() &&
+        request.resource.data.status in ['Available', 'Under Maintenance', 'Hidden', 'Archived'] &&
+        (!('updatedAt' in request.resource.data) || request.resource.data.updatedAt is timestamp);
+    }
+
+    function isValidReportCreate(reportId) {
+      return isSignedIn() &&
+        request.resource.data.keys().hasOnly([
+          'id',
+          'reporterId',
+          'reportedUserId',
+          'reportType',
+          'reason',
+          'details',
+          'chatId',
+          'bookingId',
+          'assetId',
+          'archiveRequested',
+          'bookingCancelRequested',
+          'createdAt',
+          'status'
+        ]) &&
+        request.resource.data.id == reportId &&
+        request.resource.data.reporterId == request.auth.uid &&
+        request.resource.data.reportType is string &&
+        request.resource.data.reason is string &&
+        request.resource.data.createdAt is timestamp &&
+        request.resource.data.status == 'Open' &&
+        (!('reportedUserId' in request.resource.data) ||
+          request.resource.data.reportedUserId is string) &&
+        (!('details' in request.resource.data) ||
+          request.resource.data.details is string) &&
+        (!('chatId' in request.resource.data) ||
+          request.resource.data.chatId is string) &&
+        (!('bookingId' in request.resource.data) ||
+          request.resource.data.bookingId is string) &&
+        (!('assetId' in request.resource.data) ||
+          request.resource.data.assetId is string) &&
+        (!('archiveRequested' in request.resource.data) ||
+          request.resource.data.archiveRequested is bool) &&
+        (!('bookingCancelRequested' in request.resource.data) ||
+          request.resource.data.bookingCancelRequested is bool);
+    }
+
+    function isValidReportAdminUpdate() {
+      return request.resource.data.diff(resource.data).affectedKeys()
+        .hasOnly(['status', 'lastUpdated']) &&
+        request.resource.data.status in ['Pending', 'Done'] &&
+        (!('lastUpdated' in request.resource.data) ||
+          request.resource.data.lastUpdated is timestamp);
+    }
+
+    function isValidContactMessageCreate() {
+      return request.resource.data.keys().hasOnly([
+          'name',
+          'email',
+          'subject',
+          'message',
+          'source',
+          'status',
+          'createdAt'
+        ]) &&
+        request.resource.data.name is string &&
+        request.resource.data.name.size() > 0 &&
+        request.resource.data.name.size() <= 100 &&
+        request.resource.data.email is string &&
+        request.resource.data.email.size() > 0 &&
+        request.resource.data.email.size() <= 254 &&
+        request.resource.data.email.matches('^[^@]+@[^@]+\\.[^@]+$') &&
+        request.resource.data.subject is string &&
+        request.resource.data.subject.size() > 0 &&
+        request.resource.data.subject.size() <= 120 &&
+        request.resource.data.message is string &&
+        request.resource.data.message.size() > 0 &&
+        request.resource.data.message.size() <= 2000 &&
+        request.resource.data.source == 'contact_us_web' &&
+        request.resource.data.status == 'Open' &&
+        request.resource.data.createdAt is timestamp;
+    }
+
+    function isValidEarlyAccessSignupAdminUpdate() {
+      return isAdmin() &&
+        request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['status', 'emailedAt', 'emailedBy']) &&
+        request.resource.data.status in ['Pending', 'Emailed'] &&
+        (
+          (
+            request.resource.data.status == 'Emailed' &&
+            request.resource.data.emailedAt is timestamp &&
+            request.resource.data.emailedBy == request.auth.uid
+          ) ||
+          (
+            request.resource.data.status == 'Pending' &&
+            request.resource.data.emailedAt == null &&
+            request.resource.data.emailedBy == null
+          )
+        );
+    }
+
+    function bookingParticipants(data) {
+      return isSignedIn() &&
+        (request.auth.uid == data.renter.uid ||
+          request.auth.uid == data.asset.owner.uid);
+    }
+
+    function bookingIdentityUnchanged() {
+      return request.resource.data.id == resource.data.id &&
+        request.resource.data.chatId == resource.data.chatId &&
+        request.resource.data.asset == resource.data.asset &&
+        request.resource.data.renter == resource.data.renter &&
+        request.resource.data.createdAt == resource.data.createdAt &&
+        request.resource.data.startDate == resource.data.startDate &&
+        request.resource.data.endDate == resource.data.endDate &&
+        request.resource.data.numDays == resource.data.numDays &&
+        request.resource.data.totalPrice == resource.data.totalPrice &&
+        request.resource.data.status == resource.data.status &&
+        request.resource.data.tokens == resource.data.tokens &&
+        request.resource.data.handedOver == resource.data.handedOver &&
+        request.resource.data.returned == resource.data.returned &&
+        request.resource.data.reviewed == resource.data.reviewed;
+    }
+
+    function isValidNotificationReadUpdate() {
+      return request.resource.data.diff(resource.data).affectedKeys()
+        .hasOnly(['readAt']) &&
+        request.resource.data.readAt is timestamp;
+    }
+
+    function isChatParticipant(chatId) {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/userChats/$(request.auth.uid)/chats/$(chatId));
+    }
+
+    function isActiveChatParticipant(chatId) {
+      return isSignedIn() &&
+        get(/databases/$(database)/documents/userChats/$(request.auth.uid)/chats/$(chatId)).data.status == 'Active';
+    }
+
+    function blockedChatCanMessage(chatId) {
+      let chat = get(/databases/$(database)/documents/userChats/$(request.auth.uid)/chats/$(chatId)).data;
+      return !('otherParticipantId' in chat) ||
+        !exists(/databases/$(database)/documents/users/$(request.auth.uid)/blockExclusions/$(chat.otherParticipantId)) ||
+        (('bookingId' in chat) && !('bookingStatus' in chat)) ||
+        chat.get('bookingStatus', '') in ['Pending', 'Confirmed', 'HandedOver', 'Returned', 'Cancellation Requested'];
+    }
+
+    function isValidUserMessageCreate(chatId) {
+      return isActiveChatParticipant(chatId) &&
+        blockedChatCanMessage(chatId) &&
+        currentUserCanRent() &&
+        request.resource.data.senderId == request.auth.uid &&
+        request.resource.data.visibleTo is list &&
+        request.auth.uid in request.resource.data.visibleTo;
+    }
+
+    match /users/{uid} {
+      allow read: if isSignedIn();
+      allow create: if isValidUserCreate(uid);
+      allow update: if isAdmin() || isValidUserSelfUpdate(uid);
+      allow delete: if false;
+
+      match /assets/{assetId} {
+        allow read: if isSelf(uid) || isAdmin();
+        allow create: if false;
+        allow update: if isAdmin() ||
+          (isSelf(uid) && currentUserCanList() && isValidOwnerListingStatusUpdate()) ||
+          (
+            isSelf(uid) &&
+            request.resource.data.verificationHoldSubmissionId is string &&
+            isValidVerificationHoldAssetUpdate(request.resource.data.verificationHoldSubmissionId)
+          );
+        allow delete: if false;
+      }
+
+      match /saved/{assetId} {
+        allow read: if isSelf(uid);
+        allow create, update: if isSelf(uid) &&
+          currentUserCanRent() &&
+          (
+            !('owner' in request.resource.data) ||
+            !('uid' in request.resource.data.owner) ||
+            !exists(/databases/$(database)/documents/users/$(uid)/blockExclusions/$(request.resource.data.owner.uid))
+          );
+        allow delete: if isSelf(uid) && currentUserCanRent();
+      }
+
+      match /blockExclusions/{otherUid} {
+        allow read: if isSelf(uid);
+        allow write: if false;
+      }
+
+      match /bookings/{bookingId} {
+        allow read: if isSelf(uid) || bookingParticipants(resource.data);
+        allow create: if false;
+        allow update: if isAdmin() || (isSelf(uid) && bookingIdentityUnchanged());
+        allow delete: if false;
+
+        match /events/{eventId} {
+          allow read: if isSelf(uid);
+          allow write: if false;
+        }
+      }
+
+      match /notifications/{notificationId} {
+        allow read: if isSelf(uid);
+        allow create, delete: if false;
+        allow update: if isSelf(uid) && isValidNotificationReadUpdate();
+      }
+
+      match /listingModerationEvents/{eventId} {
+        allow read: if isSelf(uid) || isAdmin();
+        allow write: if false;
+      }
+
+      match /private/{documentId} {
+        allow read: if isSelf(uid) || isAdmin();
+        allow write: if false;
+      }
+    }
+
+    match /verificationSubmissions/{submissionId} {
+      allow read: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isValidVerificationSubmissionCreate(submissionId);
+      allow update: if (isAdmin() && isValidVerificationSubmissionAdminUpdate()) ||
+        isValidVerificationSubmissionSelfUpdate(submissionId);
+      allow delete: if false;
+    }
+
+    match /adminUsers/{uid} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    match /adminMetrics/{documentId} {
+      allow read: if isAdmin();
+      allow write: if false;
+
+      match /{subcollection}/{metricId} {
+        allow read: if isAdmin();
+        allow write: if false;
+      }
+    }
+
+    match /adminActivityFeed/{activityId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    match /adminMetricEvents/{eventId} {
+      allow read, write: if false;
+    }
+
+    match /appConfig/{documentId} {
+      allow read: if documentId == 'maintenance' ||
+        (documentId == 'paymentMethods' && isSignedIn());
+      allow create, update: if documentId == 'maintenance' &&
+        isAdmin() &&
+        request.resource.data.keys().hasOnly(['enabled', 'updatedAt', 'updatedBy']) &&
+        request.resource.data.enabled is bool &&
+        request.resource.data.updatedAt is timestamp &&
+        request.resource.data.updatedBy == request.auth.uid;
+      allow create, update: if documentId == 'paymentMethods' &&
+        isValidPaymentMethodsConfigWrite();
+      allow delete: if false;
+    }
+
+    match /contentPages/{slug} {
+      allow read: if isContentPageSlug(slug);
+      allow create, update: if isValidContentPageWrite(slug);
+      allow delete: if false;
+    }
+
+    match /reports/{reportId} {
+      allow read: if isAdmin();
+      allow create: if isValidReportCreate(reportId);
+      allow update: if isAdmin() && isValidReportAdminUpdate();
+      allow delete: if false;
+    }
+
+    match /userBlocks/{blockId} {
+      allow read, write: if false;
+    }
+
+    match /accountFeedback/{feedbackId} {
+      allow read: if isAdmin();
+      allow create, update, delete: if false;
+    }
+
+    match /contactMessages/{messageId} {
+      allow read: if isAdmin();
+      allow create: if isValidContactMessageCreate();
+      allow update, delete: if false;
+    }
+
+    match /earlyAccessSignups/{signupId} {
+      allow read: if isAdmin();
+      allow create: if false;
+      allow update: if isValidEarlyAccessSignupAdminUpdate();
+      allow delete: if isAdmin();
+    }
+
+    match /earlyAccessSignupRateLimits/{rateLimitId} {
+      allow read, write: if false;
+    }
+
+    match /ownerInvites/{inviteId} {
+      allow read: if isAdmin();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /listingShareLinks/{code} {
+      allow read, write: if false;
+    }
+
+    match /listingShareLinkIndexes/{indexId} {
+      allow read, write: if false;
+    }
+
+    match /listingShareEvents/{eventId} {
+      allow read, write: if false;
+    }
+
+    match /listingReviewSubmissions/{submissionId} {
+      allow read: if isAdmin() ||
+        (isSignedIn() && resource.data.ownerId == request.auth.uid);
+      allow create, update, delete: if false;
+    }
+
+    match /businessRegistrationSubmissions/{uid} {
+      allow read: if isAdmin() || isSelf(uid);
+      allow create, update: if (isAdmin() && isValidBusinessRegistrationSubmissionAdminUpdate(uid)) ||
+        isValidBusinessRegistrationSubmissionWrite(uid);
+      allow delete: if false;
+    }
+
+    match /listingDeactivationRequests/{requestId} {
+      allow read: if isAdmin() ||
+        (isSignedIn() && resource.data.ownerId == request.auth.uid);
+      allow create, update, delete: if false;
+    }
+
+    match /categories/{categoryId} {
+      allow read: if resource.data.isActive == true || isAdmin();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /amenities/{amenityId} {
+      allow read: if resource.data.isActive == true || isAdmin();
+      allow create, update: if isAdmin();
+      allow delete: if false;
+    }
+
+    match /paymentCheckouts/{checkoutId} {
+      allow read: if isAdmin() ||
+        (isSignedIn() &&
+          (resource.data.renterId == request.auth.uid ||
+            resource.data.ownerId == request.auth.uid));
+      allow create, update, delete: if false;
+    }
+
+    match /bookings/{bookingId} {
+      allow read: if isAdmin() || bookingParticipants(resource.data);
+      allow create, delete: if false;
+      allow update: if isAdmin();
+
+      match /events/{eventId} {
+        allow read: if isAdmin() || bookingParticipants(get(/databases/$(database)/documents/bookings/$(bookingId)).data);
+        allow write: if false;
+      }
+    }
+
+    match /bookingPayouts/{payoutId} {
+      allow read: if isAdmin() ||
+        (isSignedIn() &&
+          (resource.data.renterId == request.auth.uid ||
+            resource.data.ownerId == request.auth.uid));
+      allow create, update, delete: if false;
+    }
+
+    match /bookingRefunds/{refundId} {
+      allow read: if isAdmin() ||
+        (isSignedIn() &&
+          (resource.data.renterId == request.auth.uid ||
+            resource.data.ownerId == request.auth.uid));
+      allow create, update, delete: if false;
+    }
+
+    match /processedPaymongoEvents/{eventId} {
+      allow read, write: if false;
+    }
+
+    match /assets/{assetId} {
+      allow read: if true;
+      allow create: if false;
+      allow update, delete: if isAdmin() ||
+        (
+          isSignedIn() &&
+          resource.data.ownerId == request.auth.uid &&
+          currentUserCanList() &&
+          isValidOwnerListingStatusUpdate()
+        ) ||
+        (
+          isSignedIn() &&
+          resource.data.ownerId == request.auth.uid &&
+          request.resource.data.verificationHoldSubmissionId is string &&
+          isValidVerificationHoldAssetUpdate(request.resource.data.verificationHoldSubmissionId)
+        );
+
+      match /bookings/{bookingId} {
+        allow read: if isSignedIn();
+        allow create: if false;
+        allow update: if isAdmin();
+        allow delete: if false;
+      }
+
+      match /ratings/{ratingId} {
+        allow read: if true;
+        allow create: if false;
+        allow update, delete: if false;
+      }
+
+      match /audits/{auditId} {
+        allow read: if isAdmin();
+        allow create: if isAdmin() && isValidAssetAudit();
+        allow update, delete: if false;
+      }
+    }
+
+    match /chats/{chatId} {
+      allow read: if isAdmin() || isChatParticipant(chatId);
+      allow create: if false;
+      allow update, delete: if false;
+
+      match /messages/{messageId} {
+        allow read: if isAdmin() || isChatParticipant(chatId);
+        allow create: if isSignedIn() && isValidUserMessageCreate(chatId);
+        allow update, delete: if false;
+      }
+    }
+
+    match /userChats/{uid} {
+      allow read: if isSelf(uid);
+      allow create: if isSignedIn() &&
+        request.resource.data.keys().hasOnly(['isOnline']);
+      allow update: if isSelf(uid);
+      allow delete: if false;
+
+      match /chats/{chatId} {
+        allow read: if isSelf(uid);
+        allow create: if false;
+        allow update: if isSignedIn() &&
+          (isAdmin() ||
+            (currentUserCanRent() &&
+              (isSelf(uid) ||
+                request.resource.data.lastMessageSenderId == request.auth.uid)));
+        allow delete: if isSelf(uid) && currentUserCanRent();
+      }
+    }
+  }
+}

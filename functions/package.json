@@ -1,0 +1,45 @@
+{
+  "name": "functions",
+  "description": "Cloud Functions for Firebase",
+  "scripts": {
+    "test": "node --test test/booking.util.test.js test/accountFeedback.util.test.js test/adminDashboardMetrics.util.test.js test/adminDeleteListing.test.js test/adminUpdateListingStatus.test.js test/adminSendManualUserPayout.test.js test/didit.util.test.js test/recommendations.util.test.js test/userBlock.util.test.js test/notification.util.test.js test/email.util.test.js test/emailVerification.test.js test/transactionalEmail.util.test.js test/transactionalEmailTemplates.util.test.js test/notifyVerificationReview.test.js test/paymentFlow.util.test.js test/paymentMethodsConfig.util.test.js test/reconcilePendingPaymentCheckouts.test.js test/manageUserSupportChat.test.js test/remoteConfig.util.test.js test/maintenanceMode.util.test.js test/listingShareLinks.test.js test/ownerInvite.util.test.js test/createDummyListings.test.js test/getBookingDocument.test.js test/listing-review/listingModeration.util.test.js test/listing-review/localRules.test.js test/listing-review/openaiModeration.test.js test/listing-review/processListingReviewSubmission.test.js test/listing-review/submitListingForReview.test.js test/requestListingComplianceDocuments.test.js test/storageBucket.util.test.js",
+    "test:rules": "cd .. && firebase emulators:exec --only firestore,storage \"cd functions && node --test test/rules.test.js\"",
+    "backfill:pending-booking-counts": "node scripts/backfillPendingBookingCounts.js",
+    "backfill:cancellation-requests": "node scripts/backfillCancellationRequests.js",
+    "backfill:chat-booking-dates": "node scripts/backfillChatBookingDates.js",
+    "backfill:chat-participants": "node scripts/backfillChatParticipants.js",
+    "backfill:message-visibility": "node scripts/backfillMessageVisibility.js",
+    "backfill:asset-locations": "node scripts/backfillAssetLocations.js",
+    "seed:categories": "node scripts/seedCategories.js",
+    "seed:amenities": "node scripts/seedAmenities.js",
+    "migrate:admin-users": "node scripts/migrateAdminUsersCollection.js",
+    "serve": "firebase emulators:start --only functions",
+    "shell": "firebase functions:shell",
+    "start": "npm run shell",
+    "deploy": "firebase deploy --only functions",
+    "logs": "firebase functions:log"
+  },
+  "engines": {
+    "node": "22"
+  },
+  "main": "index.js",
+  "dependencies": {
+    "@genkit-ai/google-genai": "^1.36.0",
+    "@google-cloud/tasks": "^5.3.0",
+    "crypto": "^1.0.1",
+    "dotenv": "^17.2.3",
+    "firebase-admin": "^12.7.0",
+    "firebase-functions": "^6.6.0",
+    "genkit": "^1.36.0",
+    "geofire-common": "^6.0.0",
+    "pdfkit": "^0.15.2",
+    "resend": "^6.14.0",
+    "uuid": "^7.0.3"
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^5.0.0",
+    "firebase": "^12.12.1",
+    "firebase-functions-test": "^3.1.0"
+  },
+  "private": true
+}
